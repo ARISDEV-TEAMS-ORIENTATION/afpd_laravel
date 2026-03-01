@@ -30,7 +30,7 @@ const AccessModal = ({ isOpen, onClose }) => {
                 prenom: accessForm.prenom,
                 password: accessForm.password,
             };
-            await apiPost('/api/users', payload);
+            await apiPost('/api/register', payload);
             setAccessSubmitSuccess("Demande envoyée. Nous reviendrons vers vous rapidement.");
             setAccessForm({
                 nom: '',

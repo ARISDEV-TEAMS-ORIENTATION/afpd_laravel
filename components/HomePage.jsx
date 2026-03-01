@@ -31,7 +31,7 @@ const HomePage = () => {
             if (!Array.isArray(roles)) return '';
             const match = roles.find((role) => role?.id === roleId);
             return match?.nom_role || '';
-        } catch (error) {
+        } catch {
             return '';
         }
     };
@@ -49,6 +49,27 @@ const HomePage = () => {
         );
     };
 
+    const isPresidenteRole = (normalizedRole) => {
+        if (!normalizedRole) return false;
+        return (
+            normalizedRole.includes('presidente') ||
+            normalizedRole.includes('president') ||
+            normalizedRole.includes('admin') ||
+            normalizedRole.includes('administrateur') ||
+            normalizedRole.includes('administration')
+        );
+    };
+
+    const toUserPayload = (payload) => {
+        if (!payload || typeof payload !== 'object') return null;
+        if (payload?.user && typeof payload.user === 'object') return payload.user;
+        if (payload?.data && typeof payload.data === 'object') {
+            if (payload.data?.user && typeof payload.data.user === 'object') return payload.data.user;
+            return payload.data;
+        }
+        return payload;
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
         setErrorMessage('');
@@ -61,11 +82,21 @@ const HomePage = () => {
             if (token) {
                 setAuthToken(token);
             }
-            const roleId = data?.user?.role_id;
+            let connectedUser = toUserPayload(data);
+            try {
+                const me = await apiGet('/api/me');
+                connectedUser = toUserPayload(me) || connectedUser;
+            } catch {
+                // Si /me échoue, on garde la réponse de login comme fallback.
+            }
+
+            const roleId = connectedUser?.role_id ?? connectedUser?.role?.id ?? data?.user?.role_id;
             const roleName =
-                data?.user?.role?.nom_role ||
-                data?.role?.nom_role ||
-                data?.user?.role ||
+                connectedUser?.role?.nom_role ||
+                connectedUser?.role?.name ||
+                connectedUser?.nom_role ||
+                connectedUser?.role_name ||
+                connectedUser?.role ||
                 data?.role ||
                 '';
             const resolvedRoleName = await resolveRoleName(roleId, roleName);
@@ -73,7 +104,7 @@ const HomePage = () => {
 
             // setToken(data?.token);
             // setUser(data?.user);
-            if (normalizedRole.includes('admin')) {
+            if (isPresidenteRole(normalizedRole)) {
                 navigate('/admin');
             } else if (normalizedRole.includes('tresoriere') || normalizedRole.includes('tresorier')) {
                 navigate('/tresorier');

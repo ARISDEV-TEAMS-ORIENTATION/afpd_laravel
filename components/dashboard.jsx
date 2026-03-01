@@ -26,6 +26,10 @@ const AdminDashboard = () => {
     const [eventCurveMetric, setEventCurveMetric] = useState('created');
     const [rankingMode, setRankingMode] = useState('highest_amount');
     const [rankingSearch, setRankingSearch] = useState('');
+    const [dashboardOverview, setDashboardOverview] = useState(null);
+    const [dashboardAlerts, setDashboardAlerts] = useState([]);
+    const [dashboardUpcomingEvents, setDashboardUpcomingEvents] = useState([]);
+    const [dashboardMonthlyCotisations, setDashboardMonthlyCotisations] = useState([]);
     const CORE_STATS_TIMEOUT_MS = 45000;
     const MODERATION_TIMEOUT_MS = 30000;
     const RETRY_COUNT = 2;
@@ -74,6 +78,148 @@ const AdminDashboard = () => {
             month: 'short',
             year: 'numeric',
         });
+    };
+
+    const toApiList = (payload) => {
+        if (Array.isArray(payload)) return payload;
+        if (Array.isArray(payload?.data)) return payload.data;
+        return [];
+    };
+
+    const toApiItem = (payload) => {
+        if (!payload || typeof payload !== 'object') return null;
+        if (Array.isArray(payload)) return null;
+        if (payload?.data && typeof payload.data === 'object' && !Array.isArray(payload.data)) {
+            return payload.data;
+        }
+        return payload;
+    };
+
+    const pickNumber = (candidates) => {
+        for (const value of candidates) {
+            if (value === null || value === undefined || value === '') continue;
+            const parsed = Number(value);
+            if (!Number.isNaN(parsed)) return parsed;
+        }
+        return null;
+    };
+
+    const parseMonthIndexFromToken = (value) => {
+        if (value === null || value === undefined || value === '') return null;
+        const numericValue = Number(value);
+        if (!Number.isNaN(numericValue)) {
+            if (numericValue >= 1 && numericValue <= 12) return numericValue - 1;
+            if (numericValue >= 0 && numericValue <= 11) return numericValue;
+        }
+
+        const token = normalizeStatus(value);
+        const monthLookup = {
+            jan: 0,
+            janvier: 0,
+            january: 0,
+            feb: 1,
+            fev: 1,
+            fevr: 1,
+            fevrier: 1,
+            february: 1,
+            mar: 2,
+            mars: 2,
+            march: 2,
+            apr: 3,
+            avr: 3,
+            avril: 3,
+            april: 3,
+            may: 4,
+            mai: 4,
+            jun: 5,
+            juin: 5,
+            june: 5,
+            jul: 6,
+            juil: 6,
+            juillet: 6,
+            july: 6,
+            aug: 7,
+            aou: 7,
+            aout: 7,
+            august: 7,
+            sep: 8,
+            sept: 8,
+            septembre: 8,
+            september: 8,
+            oct: 9,
+            octobre: 9,
+            october: 9,
+            nov: 10,
+            novembre: 10,
+            november: 10,
+            dec: 11,
+            decembre: 11,
+            december: 11,
+        };
+
+        if (monthLookup[token] !== undefined) return monthLookup[token];
+        return null;
+    };
+
+    const resolveMonthlyBucket = (entry, fallbackYear) => {
+        if (!entry || typeof entry !== 'object') return null;
+
+        const explicitYear = pickNumber([
+            entry?.year,
+            entry?.annee,
+            entry?.yyyy,
+            entry?.year_value,
+        ]);
+        let resolvedYear = explicitYear !== null ? Number(explicitYear) : null;
+
+        const compoundCandidates = [
+            entry?.month,
+            entry?.mois,
+            entry?.periode,
+            entry?.period,
+            entry?.bucket,
+            entry?.key,
+            entry?.label,
+            entry?.date,
+            entry?.month_key,
+        ];
+
+        for (const candidate of compoundCandidates) {
+            if (typeof candidate !== 'string') continue;
+            const trimmed = candidate.trim();
+            if (!trimmed) continue;
+
+            const isoMonthMatch = trimmed.match(/^(\d{4})[-/](\d{1,2})/);
+            if (isoMonthMatch) {
+                const year = Number(isoMonthMatch[1]);
+                const month = Number(isoMonthMatch[2]);
+                if (!Number.isNaN(year) && month >= 1 && month <= 12) {
+                    return { year, month: month - 1 };
+                }
+            }
+
+            const parsedDate = new Date(trimmed);
+            if (!Number.isNaN(parsedDate.getTime()) && /\d{4}/.test(trimmed)) {
+                return { year: parsedDate.getFullYear(), month: parsedDate.getMonth() };
+            }
+        }
+
+        const monthToken = (
+            entry?.month_number ??
+            entry?.month_index ??
+            entry?.month_num ??
+            entry?.mois_num ??
+            entry?.mois_index ??
+            entry?.month ??
+            entry?.mois
+        );
+
+        const month = parseMonthIndexFromToken(monthToken);
+        if (month === null) return null;
+
+        if (resolvedYear === null) resolvedYear = fallbackYear;
+        if (resolvedYear === null) return null;
+        return { year: resolvedYear, month };
     };
 
     const getPaymentAmount = (payment) => {
@@ -270,8 +416,20 @@ const AdminDashboard = () => {
                 fetchWithRetry('/api/admin/pending-users', { timeout: MODERATION_TIMEOUT_MS }),
                 fetchWithRetry('/api/admin/pending-events', { timeout: MODERATION_TIMEOUT_MS }),
             ]);
+            const dashboardResults = await Promise.allSettled([
+                fetchWithRetry('/api/dashboard/overview', { timeout: MODERATION_TIMEOUT_MS }),
+                fetchWithRetry(`/api/dashboard/cotisations/monthly?months=${curveRangeMonths}`, { timeout: MODERATION_TIMEOUT_MS }),
+                fetchWithRetry('/api/dashboard/evenements/upcoming?limit=10', { timeout: MODERATION_TIMEOUT_MS }),
+                fetchWithRetry('/api/dashboard/alerts', { timeout: MODERATION_TIMEOUT_MS }),
+            ]);
 
             const [pendingUsersResult, pendingEventsResult] = moderationResults;
+            const [
+                overviewResult,
+                monthlyCotisationsResult,
+                upcomingEventsResult,
+                alertsResult,
+            ] = dashboardResults;
 
             if (pendingUsersResult.status === 'fulfilled') {
                 const pendingList = Array.isArray(pendingUsersResult.value)
@@ -291,6 +449,30 @@ const AdminDashboard = () => {
                 setPendingEvents([]);
             }
 
+            if (overviewResult.status === 'fulfilled') {
+                setDashboardOverview(toApiItem(overviewResult.value));
+            } else {
+                setDashboardOverview(null);
+            }
+
+            if (monthlyCotisationsResult.status === 'fulfilled') {
+                setDashboardMonthlyCotisations(toApiList(monthlyCotisationsResult.value));
+            } else {
+                setDashboardMonthlyCotisations([]);
+            }
+
+            if (upcomingEventsResult.status === 'fulfilled') {
+                setDashboardUpcomingEvents(toApiList(upcomingEventsResult.value));
+            } else {
+                setDashboardUpcomingEvents([]);
+            }
+
+            if (alertsResult.status === 'fulfilled') {
+                setDashboardAlerts(toApiList(alertsResult.value));
+            } else {
+                setDashboardAlerts([]);
+            }
+
             if (failedCore.length > 0) {
                 setStatsError(`Certaines données n'ont pas pu être chargées: ${failedCore.join(', ')}.`);
             }
@@ -299,7 +481,7 @@ const AdminDashboard = () => {
         };
 
         fetchStats();
-    }, []);
+    }, [curveRangeMonths]);
 
     const usersById = useMemo(() => {
         const map = new Map();
@@ -366,38 +548,62 @@ const AdminDashboard = () => {
         });
 
         const activeMembersCount = users.filter((user) => (user?.statut ?? '').toLowerCase() === 'actif').length;
+        const overview = toApiItem(dashboardOverview) || {};
+        const overviewActiveMembers = pickNumber([
+            overview.active_members,
+            overview.active_users,
+            overview.adherentes_actives,
+            overview.total_active_members,
+        ]);
+        const overviewTotalCollected = pickNumber([
+            overview.total_collected,
+            overview.total_cotisations,
+            overview.total_amount,
+            overview.cotisations_total,
+        ]);
+        const overviewUnpaid = pickNumber([
+            overview.unpaid_count,
+            overview.pending_cotisations,
+            overview.cotisations_en_attente,
+            overview.late_count,
+        ]);
+        const overviewPendingUsers = pickNumber([
+            overview.pending_users,
+            overview.demandes_en_attente,
+            overview.pending_members,
+        ]);
 
         return [
             {
                 title: 'Adhérentes Actives',
-                value: `${activeMembersCount}`,
+                value: `${overviewActiveMembers ?? activeMembersCount}`,
                 icon: Users,
                 iconBg: 'bg-fuchsia-100',
                 iconColor: 'text-fuchsia-600',
             },
             {
                 title: 'Cotisations Total (Annuel)',
-                value: formatAmount(totalCollected),
+                value: formatAmount(overviewTotalCollected ?? totalCollected),
                 icon: Euro,
                 iconBg: 'bg-fuchsia-100',
                 iconColor: 'text-fuchsia-600',
             },
             {
                 title: 'Cotisations en attente',
-                value: `${unpaidCount}`,
+                value: `${overviewUnpaid ?? unpaidCount}`,
                 icon: AlertTriangle,
                 iconBg: 'bg-red-100',
                 iconColor: 'text-red-600',
             },
             {
                 title: 'Demandes en attente',
-                value: `${pendingUsers.length}`,
+                value: `${overviewPendingUsers ?? pendingUsers.length}`,
                 icon: CalendarDays,
                 iconBg: 'bg-fuchsia-100',
                 iconColor: 'text-fuchsia-600',
             },
         ];
-    }, [payments, users, pendingUsers]);
+    }, [dashboardOverview, payments, pendingUsers, users]);
 
     const eventInsights = useMemo(() => {
         const pendingEventIds = new Set(
@@ -498,8 +704,54 @@ const AdminDashboard = () => {
                 year: date.getFullYear(),
                 totalAmount: 0,
                 paymentCount: 0,
+                fromApi: false,
             };
         });
+
+        let apiMatchedBuckets = 0;
+        const dashboardMonthlyRows = toApiList(dashboardMonthlyCotisations);
+        dashboardMonthlyRows.forEach((entry) => {
+            const bucket = resolveMonthlyBucket(entry, now.getFullYear());
+            if (!bucket) return;
+
+            const target = months.find(
+                (month) => month.month === bucket.month && month.year === bucket.year,
+            );
+            if (!target) return;
+
+            const amount = pickNumber([
+                entry?.total_amount,
+                entry?.montant_total,
+                entry?.total,
+                entry?.amount,
+                entry?.sum_amount,
+                entry?.total_collected,
+            ]);
+            const count = pickNumber([
+                entry?.payment_count,
+                entry?.count,
+                entry?.total_count,
+                entry?.nombre,
+                entry?.cotisations_count,
+            ]);
+
+            let hasApiMetric = false;
+            if (amount !== null) {
+                target.totalAmount += amount;
+                hasApiMetric = true;
+            }
+            if (count !== null) {
+                target.paymentCount += count;
+                hasApiMetric = true;
+            }
+
+            if (hasApiMetric) {
+                target.fromApi = true;
+                apiMatchedBuckets += 1;
+            }
+        });
+
+        if (apiMatchedBuckets > 0) return months;
 
         paidPayments.forEach((entry) => {
             if (!entry.dateMs) return;
@@ -513,7 +765,12 @@ const AdminDashboard = () => {
         });
 
         return months;
-    }, [paidPayments, curveRangeMonths]);
+    }, [curveRangeMonths, dashboardMonthlyCotisations, paidPayments]);
+
+    const usesDashboardMonthlyData = useMemo(
+        () => monthlyCurveData.some((month) => month.fromApi),
+        [monthlyCurveData],
+    );
 
     const chartModel = useMemo(() => {
         const values = monthlyCurveData.map((month) => (
@@ -659,6 +916,59 @@ const AdminDashboard = () => {
                 return b.dateMs - a.dateMs;
             });
     }, [events]);
+
+    const dashboardUpcomingList = useMemo(() => {
+        return toApiList(dashboardUpcomingEvents)
+            .map((event, index) => {
+                const rawDate =
+                    event?.date_debut ??
+                    event?.start_date ??
+                    event?.startAt ??
+                    event?.date ??
+                    event?.scheduled_at;
+                const dateMs = rawDate ? new Date(rawDate).getTime() : null;
+                return {
+                    id: event?.id ?? `upcoming-${index}`,
+                    title: event?.titre ?? event?.title ?? event?.nom ?? 'Événement',
+                    place: event?.lieu ?? event?.location ?? '-',
+                    dateMs: Number.isNaN(dateMs) ? null : dateMs,
+                };
+            })
+            .sort((a, b) => {
+                if (a.dateMs === null && b.dateMs === null) return 0;
+                if (a.dateMs === null) return 1;
+                if (b.dateMs === null) return -1;
+                return a.dateMs - b.dateMs;
+            })
+            .slice(0, 6);
+    }, [dashboardUpcomingEvents]);
+
+    const dashboardAlertList = useMemo(() => {
+        return toApiList(dashboardAlerts)
+            .map((alert, index) => {
+                const level = normalizeStatus(alert?.level ?? alert?.type ?? alert?.severity ?? alert?.statut);
+                const count = pickNumber([
+                    alert?.count,
+                    alert?.total,
+                    alert?.value,
+                    alert?.nombre,
+                ]);
+                const message =
+                    alert?.message ??
+                    alert?.title ??
+                    alert?.titre ??
+                    alert?.label ??
+                    alert?.description ??
+                    '';
+                return {
+                    id: alert?.id ?? `alert-${index}`,
+                    level,
+                    message: message || 'Alerte système',
+                    count,
+                };
+            })
+            .slice(0, 6);
+    }, [dashboardAlerts]);
 
     const memberProfiles = useMemo(() => {
         const profileMap = new Map();
@@ -891,7 +1201,9 @@ const AdminDashboard = () => {
                             </span>
                         </p>
                         <p className="text-xs text-fuchsia-700">
-                            Données basées sur les paiements validés
+                            {usesDashboardMonthlyData
+                                ? 'Données API: /dashboard/cotisations/monthly'
+                                : 'Données basées sur les paiements validés'}
                         </p>
                     </div>
                 </div>
@@ -1053,6 +1365,67 @@ const AdminDashboard = () => {
                         {!isLoadingStats && topEventsByParticipants.length === 0 && (
                             <div className="rounded-lg bg-gray-50 px-3 py-4 text-sm text-gray-500 text-center">
                                 Aucun événement disponible.
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-8">
+                <div className="bg-white rounded-xl p-6 shadow-sm">
+                    <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-lg font-bold text-gray-800">Alertes dashboard</h2>
+                        <AlertTriangle className="w-4 h-4 text-fuchsia-600" />
+                    </div>
+                    <div className="space-y-2">
+                        {dashboardAlertList.map((alert) => {
+                            const isHigh = alert.level.includes('high') || alert.level.includes('urgent') || alert.level.includes('critique');
+                            const isMedium = alert.level.includes('medium') || alert.level.includes('moyen');
+                            const tone = isHigh
+                                ? 'bg-rose-50 border-rose-100 text-rose-700'
+                                : isMedium
+                                    ? 'bg-amber-50 border-amber-100 text-amber-700'
+                                    : 'bg-fuchsia-50 border-fuchsia-100 text-fuchsia-700';
+                            return (
+                                <div key={alert.id} className={`rounded-lg border px-3 py-2 ${tone}`}>
+                                    <p className="text-sm font-semibold">{alert.message}</p>
+                                    {alert.count !== null && (
+                                        <p className="text-xs mt-0.5">Valeur: {alert.count}</p>
+                                    )}
+                                </div>
+                            );
+                        })}
+                        {!isLoadingStats && dashboardAlertList.length === 0 && (
+                            <div className="rounded-lg bg-gray-50 px-3 py-4 text-sm text-gray-500 text-center">
+                                Aucune alerte remontée par l'API.
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                <div className="bg-white rounded-xl p-6 shadow-sm">
+                    <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-lg font-bold text-gray-800">Événements à venir</h2>
+                        <CalendarDays className="w-4 h-4 text-fuchsia-600" />
+                    </div>
+                    <div className="space-y-2">
+                        {dashboardUpcomingList.map((event) => (
+                            <div
+                                key={event.id}
+                                className="flex items-center justify-between rounded-lg border border-fuchsia-100 px-3 py-2"
+                            >
+                                <div className="min-w-0">
+                                    <p className="text-sm font-semibold text-gray-800 truncate">{event.title}</p>
+                                    <p className="text-xs text-gray-500">{event.place}</p>
+                                </div>
+                                <span className="text-xs font-semibold text-fuchsia-700 whitespace-nowrap">
+                                    {formatDateTime(event.dateMs)}
+                                </span>
+                            </div>
+                        ))}
+                        {!isLoadingStats && dashboardUpcomingList.length === 0 && (
+                            <div className="rounded-lg bg-gray-50 px-3 py-4 text-sm text-gray-500 text-center">
+                                Aucun événement à venir remonté.
                             </div>
                         )}
                     </div>

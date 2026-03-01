@@ -216,6 +216,31 @@ const getParticipantName = (participant) => {
     return participant?.name ?? participant?.email ?? '-';
 };
 
+const getParticipantUserId = (participant) => (
+    participant?.user_id ??
+    participant?.id_user ??
+    participant?.adherente_id ??
+    participant?.participant_id ??
+    participant?.user?.id ??
+    participant?.id ??
+    null
+);
+
+const getParticipantPresence = (participant) => {
+    const raw =
+        participant?.presence ??
+        participant?.is_present ??
+        participant?.present ??
+        participant?.is_presente;
+    if (typeof raw === 'boolean') return raw;
+    if (typeof raw === 'number') return raw === 1;
+    if (typeof raw === 'string') {
+        const token = normalizeText(raw);
+        return ['1', 'true', 'oui', 'yes', 'present', 'presente'].includes(token);
+    }
+    return false;
+};
+
 const CommunityManagerDashboard = () => {
     const navigate = useNavigate();
 
@@ -238,8 +263,14 @@ const CommunityManagerDashboard = () => {
     const [deletingEventId, setDeletingEventId] = useState(null);
     const [selectedEventId, setSelectedEventId] = useState(null);
     const [selectedEventDetails, setSelectedEventDetails] = useState(null);
+    const [selectedParticipantsData, setSelectedParticipantsData] = useState(null);
     const [isLoadingDetails, setIsLoadingDetails] = useState(false);
     const [detailsError, setDetailsError] = useState('');
+    const [participantsError, setParticipantsError] = useState('');
+    const [statusActionError, setStatusActionError] = useState('');
+    const [presenceActionError, setPresenceActionError] = useState('');
+    const [updatingStatusEventId, setUpdatingStatusEventId] = useState(null);
+    const [updatingPresenceUserId, setUpdatingPresenceUserId] = useState(null);
 
     const [isLoggingOut, setIsLoggingOut] = useState(false);
 
@@ -299,6 +330,7 @@ const CommunityManagerDashboard = () => {
     const loadEventDetails = useCallback(async (eventId, fallbackEvent = null) => {
         if (eventId === null || eventId === undefined || eventId === '') {
             setSelectedEventDetails(null);
+            setSelectedParticipantsData(null);
             return;
         }
 
@@ -306,26 +338,40 @@ const CommunityManagerDashboard = () => {
         setSelectedEventId(normalizedId);
         setIsLoadingDetails(true);
         setDetailsError('');
+        setParticipantsError('');
+        setPresenceActionError('');
         if (fallbackEvent) {
             setSelectedEventDetails(fallbackEvent);
+            setSelectedParticipantsData(getParticipants(fallbackEvent));
         }
 
         try {
-            const response = await apiGet(`/api/evenements/${normalizedId}`);
-            const event = toSingle(response);
-            if (event) {
-                setSelectedEventDetails(event);
-                return;
+            const [eventResponse, participantsResponse] = await Promise.allSettled([
+                apiGet(`/api/evenements/${normalizedId}`),
+                apiGet(`/api/evenements/${normalizedId}/participants`),
+            ]);
+
+            if (eventResponse.status === 'fulfilled') {
+                const event = toSingle(eventResponse.value);
+                if (event) {
+                    setSelectedEventDetails(event);
+                } else if (!fallbackEvent) {
+                    setSelectedEventDetails(null);
+                }
+            } else if (!fallbackEvent) {
+                setDetailsError("Impossible de charger le detail de l'evenement.");
             }
-            if (!fallbackEvent) {
-                setSelectedEventDetails(null);
+
+            if (participantsResponse.status === 'fulfilled') {
+                setSelectedParticipantsData(toList(participantsResponse.value));
+            } else if (!fallbackEvent) {
+                setSelectedParticipantsData([]);
+                setParticipantsError("Impossible de charger les participantes.");
             }
-        } catch (error) {
-            // On conserve les donnees deja chargees depuis la liste pour eviter un ecran d'erreur inutile.
+        } catch {
             if (!fallbackEvent) {
                 setDetailsError("Impossible de charger le detail de l'evenement.");
-            } else {
-                setDetailsError('');
+                setSelectedParticipantsData([]);
             }
         } finally {
             setIsLoadingDetails(false);
@@ -445,7 +491,10 @@ const CommunityManagerDashboard = () => {
     }, [eventRows, selectedEventId]);
 
     const selectedDetailsSource = selectedEventDetails || selectedEvent?.raw || null;
-    const selectedParticipants = useMemo(() => getParticipants(selectedDetailsSource), [selectedDetailsSource]);
+    const selectedParticipants = useMemo(() => {
+        if (Array.isArray(selectedParticipantsData)) return selectedParticipantsData;
+        return getParticipants(selectedDetailsSource);
+    }, [selectedDetailsSource, selectedParticipantsData]);
 
     const resetForm = () => {
         setEventForm(EMPTY_FORM);
@@ -595,7 +644,9 @@ const CommunityManagerDashboard = () => {
             if (selectedEventId === String(eventId)) {
                 setSelectedEventId(null);
                 setSelectedEventDetails(null);
+                setSelectedParticipantsData(null);
                 setDetailsError('');
+                setParticipantsError('');
             }
 
             if (eventForm.id === String(eventId)) {
@@ -605,6 +656,58 @@ const CommunityManagerDashboard = () => {
             setEventsError("La suppression de l'evenement a echoue.");
         } finally {
             setDeletingEventId(null);
+        }
+    };
+
+    const handleUpdateEventStatus = async (eventId, statut) => {
+        if (!eventId || !statut || updatingStatusEventId) return;
+        setUpdatingStatusEventId(String(eventId));
+        setStatusActionError('');
+        try {
+            await apiFetch(`/api/evenements/${eventId}/status`, {
+                method: 'PATCH',
+                body: JSON.stringify({ statut }),
+            });
+            await fetchEvents();
+            if (selectedEventId === String(eventId)) {
+                await loadEventDetails(eventId, selectedEvent?.raw ?? null);
+            }
+        } catch (error) {
+            setStatusActionError(error?.message || "La mise a jour du statut a echoue.");
+        } finally {
+            setUpdatingStatusEventId(null);
+        }
+    };
+
+    const handleTogglePresence = async (participant, nextPresence) => {
+        if (!selectedEventId) return;
+        const userId = getParticipantUserId(participant);
+        if (!userId || updatingPresenceUserId) return;
+
+        const participantKey = String(userId);
+        setUpdatingPresenceUserId(participantKey);
+        setPresenceActionError('');
+        try {
+            await apiFetch(`/api/evenements/${selectedEventId}/participants/${participantKey}/presence`, {
+                method: 'PATCH',
+                body: JSON.stringify({ presence: nextPresence }),
+            });
+            setSelectedParticipantsData((prev) => {
+                if (!Array.isArray(prev)) return prev;
+                return prev.map((item) => {
+                    const currentId = getParticipantUserId(item);
+                    if (`${currentId}` !== participantKey) return item;
+                    return {
+                        ...item,
+                        presence: nextPresence,
+                        is_present: nextPresence,
+                    };
+                });
+            });
+        } catch (error) {
+            setPresenceActionError(error?.message || 'La mise a jour de presence a echoue.');
+        } finally {
+            setUpdatingPresenceUserId(null);
         }
     };
 
@@ -853,6 +956,22 @@ const CommunityManagerDashboard = () => {
                                                     <div className="flex items-center gap-2">
                                                         <button
                                                             type="button"
+                                                            onClick={() => handleUpdateEventStatus(event.id, 'actif')}
+                                                            disabled={updatingStatusEventId === event.id}
+                                                            className="px-2.5 py-1.5 rounded-lg border border-emerald-200 text-emerald-700 hover:bg-emerald-50 text-xs font-semibold disabled:opacity-60"
+                                                        >
+                                                            {updatingStatusEventId === event.id ? '...' : 'Activer'}
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleUpdateEventStatus(event.id, 'refuse')}
+                                                            disabled={updatingStatusEventId === event.id}
+                                                            className="px-2.5 py-1.5 rounded-lg border border-rose-200 text-rose-700 hover:bg-rose-50 text-xs font-semibold disabled:opacity-60"
+                                                        >
+                                                            Refuser
+                                                        </button>
+                                                        <button
+                                                            type="button"
                                                             onClick={() => startEditMode(event)}
                                                             className="p-2 rounded-lg border border-fuchsia-200 text-fuchsia-700 hover:bg-fuchsia-50"
                                                             aria-label="Modifier"
@@ -876,6 +995,11 @@ const CommunityManagerDashboard = () => {
                                 </table>
                             </div>
                         </div>
+                        {statusActionError && (
+                            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                                {statusActionError}
+                            </div>
+                        )}
 
                         <div className="rounded-2xl border border-fuchsia-100 bg-white p-4">
                             <div className="flex items-center justify-between mb-4">
@@ -905,6 +1029,12 @@ const CommunityManagerDashboard = () => {
                             {selectedEventId && !isLoadingDetails && detailsError && (
                                 <p className="text-sm text-red-600">{detailsError}</p>
                             )}
+                            {selectedEventId && !isLoadingDetails && participantsError && (
+                                <p className="text-sm text-red-600">{participantsError}</p>
+                            )}
+                            {selectedEventId && !isLoadingDetails && presenceActionError && (
+                                <p className="text-sm text-red-600">{presenceActionError}</p>
+                            )}
 
                             {selectedEventId && !isLoadingDetails && !detailsError && (
                                 <div className="space-y-3">
@@ -927,6 +1057,7 @@ const CommunityManagerDashboard = () => {
                                                         <th className="py-2 pr-4">Email</th>
                                                         <th className="py-2 pr-4">Telephone</th>
                                                         <th className="py-2">Date inscription</th>
+                                                        <th className="py-2 pl-4">Presence</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody className="divide-y divide-fuchsia-100/70">
@@ -936,6 +1067,26 @@ const CommunityManagerDashboard = () => {
                                                             <td className="py-2 pr-4 text-sm text-slate-600">{participant?.email ?? '-'}</td>
                                                             <td className="py-2 pr-4 text-sm text-slate-600">{participant?.telephone ?? participant?.phone ?? '-'}</td>
                                                             <td className="py-2 text-sm text-slate-600">{formatDateTime(participant?.created_at ?? participant?.date_inscription ?? participant?.registered_at)}</td>
+                                                            <td className="py-2 pl-4 text-sm text-slate-700">
+                                                                {getParticipantUserId(participant) ? (
+                                                                    <label className="inline-flex items-center gap-2 cursor-pointer">
+                                                                        <input
+                                                                            type="checkbox"
+                                                                            checked={getParticipantPresence(participant)}
+                                                                            onChange={(e) => handleTogglePresence(participant, e.target.checked)}
+                                                                            disabled={updatingPresenceUserId === String(getParticipantUserId(participant))}
+                                                                            className="h-4 w-4 rounded border-slate-300 text-fuchsia-700 focus:ring-fuchsia-500"
+                                                                        />
+                                                                        <span className="text-xs text-slate-600">
+                                                                            {updatingPresenceUserId === String(getParticipantUserId(participant))
+                                                                                ? 'Maj...'
+                                                                                : (getParticipantPresence(participant) ? 'Présente' : 'Absente')}
+                                                                        </span>
+                                                                    </label>
+                                                                ) : (
+                                                                    <span className="text-xs text-slate-400">N/A</span>
+                                                                )}
+                                                            </td>
                                                         </tr>
                                                     ))}
                                                 </tbody>

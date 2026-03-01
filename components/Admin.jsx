@@ -129,6 +129,17 @@ const mapEventForModeration = (event) => {
     };
 };
 
+const fetchPendingEventsPayload = async () => {
+    try {
+        return await apiGet('/api/admin/pending-events');
+    } catch (error) {
+        if (error?.status === 404) {
+            return apiGet('/api/admin/evenements/pending');
+        }
+        throw error;
+    }
+};
+
 const MembersView = () => {
     const [searchQuery, setSearchQuery] = useState('');
     const [activeFilter, setActiveFilter] = useState('Toutes');
@@ -995,7 +1006,7 @@ const PendingEventsView = ({ onPendingEventsCountChange }) => {
         setIsLoadingPendingEvents(true);
         setPendingEventsError('');
         try {
-            const response = await apiGet('/api/admin/pending-events');
+            const response = await fetchPendingEventsPayload();
             const events = toApiList(response)
                 .filter((event) => event?.id !== undefined && event?.id !== null)
                 .map(mapEventForModeration);
@@ -1348,7 +1359,7 @@ const Admin = ({ initialSectionId = 'dashboard' }) => {
 
     const refreshPendingEventsCount = useCallback(async () => {
         try {
-            const response = await apiGet('/api/admin/pending-events');
+            const response = await fetchPendingEventsPayload();
             const count = toApiList(response).filter((event) => event?.id !== undefined && event?.id !== null).length;
             setPendingEventsCount(count);
         } catch (error) {

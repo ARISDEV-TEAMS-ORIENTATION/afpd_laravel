@@ -32,15 +32,24 @@ export const apiFetch = async (
 ): Promise<Response> => {
     const fallbackTimeout = Number.isFinite(API_TIMEOUT_MS) ? API_TIMEOUT_MS : 15000;
     const { timeout = fallbackTimeout, ...fetchOptions } = options;
+    const resolvedTimeout =
+        Number.isFinite(timeout) && timeout > 0 ? timeout : fallbackTimeout;
 
     const url = `${API_BASE_URL}${endpoint}`;
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    const timeoutId = setTimeout(() => controller.abort(), resolvedTimeout);
     const isFormDataBody =
         typeof FormData !== 'undefined' && fetchOptions.body instanceof FormData;
     const authToken = getAuthToken();
-    const authHeader = authToken ? { Authorization: `Bearer ${authToken}` } : {};
+    const headers = new Headers(fetchOptions.headers);
+
+    if (!isFormDataBody && !headers.has('Content-Type')) {
+        headers.set('Content-Type', 'application/json');
+    }
+    if (authToken && !headers.has('Authorization')) {
+        headers.set('Authorization', `Bearer ${authToken}`);
+    }
 
     try {
         const response = await fetch(url, {
@@ -48,17 +57,8 @@ export const apiFetch = async (
             signal: controller.signal,
             // Utiliser 'same-origin' au lieu de 'include' pour éviter les erreurs CORS
             // Une fois le backend configuré avec CORS strict, passer à 'include'
-            credentials: (fetchOptions as any).credentials || 'same-origin',
-            headers: isFormDataBody
-                ? {
-                    ...authHeader,
-                    ...fetchOptions.headers,
-                }
-                : {
-                    'Content-Type': 'application/json',
-                    ...authHeader,
-                    ...fetchOptions.headers,
-                },
+            credentials: fetchOptions.credentials ?? 'same-origin',
+            headers,
         });
 
         if (!response.ok) {
@@ -85,7 +85,7 @@ export const apiFetch = async (
         return response;
     } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') {
-            throw new Error(`Request timeout after ${timeout}ms`);
+            throw new Error(`Request timeout after ${resolvedTimeout}ms`);
         }
         throw error;
     } finally {
@@ -146,4 +146,15 @@ export const apiPostForm = async (
         body: data,
     });
     return response.json();
+};
+
+export const apiDownload = async (
+    endpoint: string,
+    options?: FetchOptions
+): Promise<Blob> => {
+    const response = await apiFetch(endpoint, {
+        ...options,
+        method: options?.method ?? 'GET',
+    });
+    return response.blob();
 };

@@ -6,9 +6,6 @@ import {
   Filter,
   FileText,
   FileSpreadsheet,
-  MoreVertical,
-  ChevronLeft,
-  ChevronRight,
   ChevronDown,
   ChevronUp,
   CircleDollarSign,
@@ -16,7 +13,7 @@ import {
   Users,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { apiFetch, apiGet, apiPost, clearAuthToken } from '../src/api';
+import { apiDownload, apiFetch, apiGet, apiPost, clearAuthToken } from '../src/api';
 import AFPDLogo from './AFPDLogo';
 
 const PAYMENT_DEADLINE_HOURS = 24;
@@ -41,8 +38,23 @@ const CotisationsTracker = () => {
   const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
   const [paymentError, setPaymentError] = useState('');
   const [paymentForm, setPaymentForm] = useState({ user_id: '', montant: '' });
+  const [summaryData, setSummaryData] = useState(null);
+  const [latePayments, setLatePayments] = useState([]);
+  const [isLoadingInsights, setIsLoadingInsights] = useState(true);
+  const [insightsError, setInsightsError] = useState('');
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  const [isGeneratingReceiptId, setIsGeneratingReceiptId] = useState(null);
+  const [receiptError, setReceiptError] = useState('');
   const hasFetchedRef = useRef(false);
   const navigate = useNavigate();
+
+  const currentMonth = useMemo(() => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = `${now.getMonth() + 1}`.padStart(2, '0');
+    return `${year}-${month}`;
+  }, []);
 
   const getInitials = (lastName, firstName) => {
     const first = (lastName || '').trim().charAt(0);
@@ -141,6 +153,67 @@ const CotisationsTracker = () => {
     )
   );
 
+  const toList = (payload) => {
+    if (Array.isArray(payload)) return payload;
+    if (Array.isArray(payload?.data)) return payload.data;
+    return [];
+  };
+
+  const toItem = (payload) => {
+    if (!payload || typeof payload !== 'object') return null;
+    if (Array.isArray(payload)) return null;
+    if (payload?.data && typeof payload.data === 'object' && !Array.isArray(payload.data)) {
+      return payload.data;
+    }
+    return payload;
+  };
+
+  const readSummaryAmount = (summaryPayload) => {
+    const summary = toItem(summaryPayload) || {};
+    const candidates = [
+      summary.total_amount,
+      summary.total_collected,
+      summary.total_paye,
+      summary.total_paid,
+      summary.montant_total,
+      summary.total,
+    ];
+    for (const value of candidates) {
+      const parsed = parseAmount(value);
+      if (parsed !== null) return parsed;
+    }
+    return null;
+  };
+
+  const readSummaryLateCount = (summaryPayload) => {
+    const summary = toItem(summaryPayload) || {};
+    const candidates = [
+      summary.late_count,
+      summary.retard_count,
+      summary.overdue_count,
+      summary.pending_count,
+      summary.en_attente_count,
+    ];
+    for (const value of candidates) {
+      const parsed = Number(value);
+      if (!Number.isNaN(parsed) && parsed >= 0) return parsed;
+    }
+    return null;
+  };
+
+  const buildCotisationsQuery = () => {
+    const params = new URLSearchParams();
+    const statusByTab = {
+      payes: 'paye',
+      attente: 'en_attente',
+      retard: 'en_attente',
+    };
+    const mappedStatus = statusByTab[activeTab];
+    if (mappedStatus) params.set('status', mappedStatus);
+    params.set('month', currentMonth);
+    return params.toString();
+  };
+
   const fetchPayments = async () => {
     setIsLoadingPayments(true);
     setPaymentsError('');
@@ -154,7 +227,7 @@ const CotisationsTracker = () => {
       }
       setPayments(list);
     } catch (error) {
-      setPaymentsError("Impossible de charger les paiements.");
+      setPaymentsError(error?.message || "Impossible de charger les paiements.");
     } finally {
       setIsLoadingPayments(false);
     }
@@ -176,9 +249,28 @@ const CotisationsTracker = () => {
         : [];
       setUsers(eligibleUsers);
     } catch (error) {
-      setUsersError("Impossible de charger les utilisateurs.");
+      setUsersError(error?.message || "Impossible de charger les utilisateurs.");
     } finally {
       setIsLoadingUsers(false);
+    }
+  };
+
+  const fetchInsights = async () => {
+    setIsLoadingInsights(true);
+    setInsightsError('');
+    try {
+      const [summaryResponse, lateResponse] = await Promise.all([
+        apiGet(`/api/cotisations/summary?month=${currentMonth}`),
+        apiGet(`/api/cotisations/late?month=${currentMonth}`),
+      ]);
+      setSummaryData(toItem(summaryResponse));
+      setLatePayments(toList(lateResponse));
+    } catch (error) {
+      setSummaryData(null);
+      setLatePayments([]);
+      setInsightsError(error?.message || "Impossible de charger les indicateurs de cotisations.");
+    } finally {
+      setIsLoadingInsights(false);
     }
   };
 
@@ -187,6 +279,7 @@ const CotisationsTracker = () => {
     hasFetchedRef.current = true;
     fetchPayments();
     fetchUsers();
+    fetchInsights();
   }, []);
 
   const handleLogout = async () => {
@@ -220,11 +313,56 @@ const CotisationsTracker = () => {
       await apiPost('/api/cotisations', payload);
       setIsAddPaymentOpen(false);
       setPaymentForm({ user_id: '', montant: '' });
-      await fetchPayments();
+      await Promise.all([fetchPayments(), fetchInsights()]);
     } catch (error) {
-      setPaymentError("Impossible d'enregistrer le paiement.");
+      setPaymentError(error?.message || "Impossible d'enregistrer le paiement.");
     } finally {
       setIsSubmittingPayment(false);
+    }
+  };
+
+  const triggerBlobDownload = (blob, filename) => {
+    const blobUrl = window.URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = blobUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(blobUrl);
+  };
+
+  const handleExport = async (format) => {
+    if (isExporting) return;
+    setIsExporting(true);
+    setExportError('');
+    try {
+      const query = buildCotisationsQuery();
+      const endpoint = `/api/cotisations/export/${format}${query ? `?${query}` : ''}`;
+      const blob = await apiDownload(endpoint);
+      const filename = `cotisations-${currentMonth}.${format}`;
+      triggerBlobDownload(blob, filename);
+    } catch (error) {
+      setExportError(error?.message || "L'export a échoué.");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleGenerateReceipt = async (paymentId) => {
+    if (!paymentId || isGeneratingReceiptId) return;
+    setIsGeneratingReceiptId(paymentId);
+    setReceiptError('');
+    try {
+      const response = await apiPost(`/api/cotisations/${paymentId}/receipt`, {});
+      const receiptUrl = response?.url ?? response?.download_url ?? response?.receipt_url ?? '';
+      if (receiptUrl && typeof receiptUrl === 'string') {
+        window.open(receiptUrl, '_blank', 'noopener,noreferrer');
+      }
+    } catch (error) {
+      setReceiptError(error?.message || 'Impossible de générer le reçu.');
+    } finally {
+      setIsGeneratingReceiptId(null);
     }
   };
 
@@ -256,6 +394,7 @@ const CotisationsTracker = () => {
 
         return {
           id: payment?.id ?? `${userKey}-${dateValue ?? index}`,
+          paymentId: payment?.id ?? null,
           userId: userKey,
           memberId: userKey,
           name: fullName || '-',
@@ -363,6 +502,7 @@ const CotisationsTracker = () => {
         hasArchivedPayment: !activePayment && !!latestPaidPayment,
         lastPaymentDate: latestPaidPayment?.date ?? '-',
         lastPaymentTime: latestPaidPayment?.time ?? '-',
+        receiptPaymentId: activePayment?.paymentId ?? latestPaidPayment?.paymentId ?? null,
         status: computedStatus,
         rawStatus: computedStatus,
         color: '#F8D7EA',
@@ -456,6 +596,11 @@ const CotisationsTracker = () => {
       (payment) => payment.status === 'late' || payment.status === 'pending',
     ).length;
 
+    const summaryAmount = readSummaryAmount(summaryData);
+    const summaryLateCount = readSummaryLateCount(summaryData);
+    const lateFromEndpoint = Array.isArray(latePayments) ? latePayments.length : null;
+    const effectiveLateCount = summaryLateCount ?? lateFromEndpoint ?? lateOrPendingCount;
+
     const lastUpdateLabel = latestPaymentMs
       ? `Dernière mise à jour: ${formatDate(latestPaymentMs)} ${formatTime(latestPaymentMs)}`
       : 'Dernière mise à jour: -';
@@ -463,7 +608,7 @@ const CotisationsTracker = () => {
     return [
       {
         title: "TOTAL COLLECTÉ (ANNUEL)",
-        amount: formatAmount(totalCollected),
+        amount: formatAmount(summaryAmount ?? totalCollected),
         change: '',
         subtitle: lastUpdateLabel,
         icon: CircleDollarSign,
@@ -471,9 +616,9 @@ const CotisationsTracker = () => {
       },
       {
         title: "IMPAYÉS / RETARD",
-        amount: `${lateOrPendingCount}`,
+        amount: `${effectiveLateCount}`,
         change: '',
-        subtitle: `${lateOrPendingCount} adhérente(s) en attente ou en retard`,
+        subtitle: `${effectiveLateCount} adhérente(s) en attente ou en retard`,
         icon: AlertTriangle,
         color: "orange"
       },
@@ -486,7 +631,7 @@ const CotisationsTracker = () => {
         color: "rose"
       }
     ];
-  }, [payments, paymentsDisplay, users]);
+  }, [latePayments, payments, paymentsDisplay, summaryData, users]);
 
   const getStatusBadge = (status) => {
     switch(status) {
@@ -623,6 +768,11 @@ const CotisationsTracker = () => {
             </div>
           ))}
         </div>
+        {isLoadingInsights && (
+          <div className="mb-4 rounded-xl border border-fuchsia-100 bg-fuchsia-50 px-4 py-3 text-sm text-fuchsia-700">
+            Mise à jour des indicateurs (summary/late)...
+          </div>
+        )}
 
         {/* Table Card */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-100">
@@ -686,13 +836,23 @@ const CotisationsTracker = () => {
                     </div>
                   )}
                 </div>
-                <button className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 rounded-lg transition-colors">
+                <button
+                  type="button"
+                  onClick={() => handleExport('pdf')}
+                  disabled={isExporting}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                >
                   <FileText size={16} />
-                  PDF
+                  {isExporting ? 'Export...' : 'PDF'}
                 </button>
-                <button className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 rounded-lg transition-colors">
+                <button
+                  type="button"
+                  onClick={() => handleExport('csv')}
+                  disabled={isExporting}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                >
                   <FileSpreadsheet size={16} />
-                  Excel
+                  {isExporting ? 'Export...' : 'Excel'}
                 </button>
                 <button
                   type="button"
@@ -710,6 +870,11 @@ const CotisationsTracker = () => {
               Délai actif de paiement: {PAYMENT_DEADLINE_HOURS}h. Après ce délai, le paiement passe en archive et l'adhérente peut être enregistrée de nouveau.
             </p>
           </div>
+          {(insightsError || exportError || receiptError) && (
+            <div className="px-6 py-3 border-b border-red-100 bg-red-50 text-sm text-red-700">
+              {insightsError || exportError || receiptError}
+            </div>
+          )}
 
           {/* Table */}
           <div className="overflow-x-auto">
@@ -811,9 +976,18 @@ const CotisationsTracker = () => {
                       {getStatusBadge(payment.status)}
                     </td>
                     <td className="px-6 py-4">
-                      <button className="p-1 hover:bg-gray-100 rounded transition-colors">
-                        <MoreVertical size={18} className="text-gray-400" />
-                      </button>
+                      {payment.receiptPaymentId ? (
+                        <button
+                          type="button"
+                          onClick={() => handleGenerateReceipt(payment.receiptPaymentId)}
+                          disabled={isGeneratingReceiptId === payment.receiptPaymentId}
+                          className="px-3 py-1.5 text-xs font-semibold text-fuchsia-700 bg-fuchsia-50 hover:bg-fuchsia-100 rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          {isGeneratingReceiptId === payment.receiptPaymentId ? 'Reçu...' : 'Reçu'}
+                        </button>
+                      ) : (
+                        <span className="text-xs text-gray-400">-</span>
+                      )}
                     </td>
                   </tr>
                 ))}
