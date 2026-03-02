@@ -111,8 +111,7 @@ const HomePage = () => {
             } else if (isCommunityManagerRole(normalizedRole)) {
                 navigate('/community-manager');
             } else {
-                clearAuthToken();
-                setErrorMessage("Accès non autorisé pour ce rôle.");
+                navigate('/utilisatrice');
             }
         } catch (error) {
             clearAuthToken();

@@ -2,6 +2,7 @@ import HomePage from '../components/HomePage';
 import Admin from '../components/Admin';
 import CotisationsTracker from '../components/TresorierDashboard'
 import CommunityManagerDashboard from '../components/CommunityManagerDashboard';
+import EspaceUtilisatrice from '../components/EspaceUtilisatrice';
 
 const AdminDashboardRoute = () => <Admin initialSectionId="dashboard" />;
 
@@ -35,6 +36,12 @@ export const routes = [
         path: '/community-manager',
         element: CommunityManagerDashboard,
         name: 'Community Manager',
+    },
+    {
+        id: 'utilisatrice',
+        path: '/utilisatrice',
+        element: EspaceUtilisatrice,
+        name: 'Espace Utilisatrice',
     }
 
     // Ajoute tes autres routes ici

@@ -3,7 +3,6 @@ import {
     CalendarClock,
     Clock3,
     LoaderCircle,
-    LogOut,
     MapPin,
     Pencil,
     Plus,
@@ -15,6 +14,8 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AFPDLogo from './AFPDLogo';
+import ProfileModal from './ProfileModal';
+import ProfileAvatarBadge from './ProfileAvatarBadge';
 import { apiFetch, apiGet, apiPostForm, API_BASE_URL, clearAuthToken } from '../src/api';
 
 const AUTO_REFRESH_MS = 20_000;
@@ -267,12 +268,11 @@ const CommunityManagerDashboard = () => {
     const [isLoadingDetails, setIsLoadingDetails] = useState(false);
     const [detailsError, setDetailsError] = useState('');
     const [participantsError, setParticipantsError] = useState('');
-    const [statusActionError, setStatusActionError] = useState('');
     const [presenceActionError, setPresenceActionError] = useState('');
-    const [updatingStatusEventId, setUpdatingStatusEventId] = useState(null);
     const [updatingPresenceUserId, setUpdatingPresenceUserId] = useState(null);
 
     const [isLoggingOut, setIsLoggingOut] = useState(false);
+    const [isProfileOpen, setIsProfileOpen] = useState(false);
 
     const usersById = useMemo(() => {
         const map = new Map();
@@ -659,26 +659,6 @@ const CommunityManagerDashboard = () => {
         }
     };
 
-    const handleUpdateEventStatus = async (eventId, statut) => {
-        if (!eventId || !statut || updatingStatusEventId) return;
-        setUpdatingStatusEventId(String(eventId));
-        setStatusActionError('');
-        try {
-            await apiFetch(`/api/evenements/${eventId}/status`, {
-                method: 'PATCH',
-                body: JSON.stringify({ statut }),
-            });
-            await fetchEvents();
-            if (selectedEventId === String(eventId)) {
-                await loadEventDetails(eventId, selectedEvent?.raw ?? null);
-            }
-        } catch (error) {
-            setStatusActionError(error?.message || "La mise a jour du statut a echoue.");
-        } finally {
-            setUpdatingStatusEventId(null);
-        }
-    };
-
     const handleTogglePresence = async (participant, nextPresence) => {
         if (!selectedEventId) return;
         const userId = getParticipantUserId(participant);
@@ -788,13 +768,12 @@ const CommunityManagerDashboard = () => {
                         </button>
                         <button
                             type="button"
-                            onClick={handleLogout}
-                            disabled={isLoggingOut}
-                            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-fuchsia-700 text-white hover:bg-fuchsia-800 transition-colors disabled:opacity-60"
+                            onClick={() => setIsProfileOpen(true)}
+                            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-fuchsia-200 text-fuchsia-700 hover:bg-fuchsia-50 transition-colors"
                         >
-                            <LogOut className="w-4 h-4" />
-                            {isLoggingOut ? 'Deconnexion...' : 'Deconnexion'}
+                            Mon profil
                         </button>
+                        <ProfileAvatarBadge onClick={() => setIsProfileOpen(true)} />
                     </div>
                 </div>
             </header>
@@ -956,22 +935,6 @@ const CommunityManagerDashboard = () => {
                                                     <div className="flex items-center gap-2">
                                                         <button
                                                             type="button"
-                                                            onClick={() => handleUpdateEventStatus(event.id, 'actif')}
-                                                            disabled={updatingStatusEventId === event.id}
-                                                            className="px-2.5 py-1.5 rounded-lg border border-emerald-200 text-emerald-700 hover:bg-emerald-50 text-xs font-semibold disabled:opacity-60"
-                                                        >
-                                                            {updatingStatusEventId === event.id ? '...' : 'Activer'}
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => handleUpdateEventStatus(event.id, 'refuse')}
-                                                            disabled={updatingStatusEventId === event.id}
-                                                            className="px-2.5 py-1.5 rounded-lg border border-rose-200 text-rose-700 hover:bg-rose-50 text-xs font-semibold disabled:opacity-60"
-                                                        >
-                                                            Refuser
-                                                        </button>
-                                                        <button
-                                                            type="button"
                                                             onClick={() => startEditMode(event)}
                                                             className="p-2 rounded-lg border border-fuchsia-200 text-fuchsia-700 hover:bg-fuchsia-50"
                                                             aria-label="Modifier"
@@ -995,11 +958,6 @@ const CommunityManagerDashboard = () => {
                                 </table>
                             </div>
                         </div>
-                        {statusActionError && (
-                            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                                {statusActionError}
-                            </div>
-                        )}
 
                         <div className="rounded-2xl border border-fuchsia-100 bg-white p-4">
                             <div className="flex items-center justify-between mb-4">
@@ -1257,6 +1215,12 @@ const CommunityManagerDashboard = () => {
                     </aside>
                 </section>
             </main>
+
+            <ProfileModal
+                isOpen={isProfileOpen}
+                onClose={() => setIsProfileOpen(false)}
+                onLogout={handleLogout}
+            />
         </div>
     );
 };

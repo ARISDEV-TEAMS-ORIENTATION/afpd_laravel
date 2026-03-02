@@ -15,6 +15,8 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { apiDownload, apiFetch, apiGet, apiPost, clearAuthToken } from '../src/api';
 import AFPDLogo from './AFPDLogo';
+import ProfileModal from './ProfileModal';
+import ProfileAvatarBadge from './ProfileAvatarBadge';
 
 const PAYMENT_DEADLINE_HOURS = 24;
 const PAYMENT_DEADLINE_MS = PAYMENT_DEADLINE_HOURS * 60 * 60 * 1000;
@@ -28,6 +30,7 @@ const CotisationsTracker = () => {
   const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isAddPaymentOpen, setIsAddPaymentOpen] = useState(false);
   const [payments, setPayments] = useState([]);
   const [isLoadingPayments, setIsLoadingPayments] = useState(true);
@@ -704,12 +707,12 @@ const CotisationsTracker = () => {
             </button>
             <button
               type="button"
-              onClick={handleLogout}
-              disabled={isLoggingOut}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition disabled:opacity-60 disabled:cursor-not-allowed"
+              onClick={() => setIsProfileOpen(true)}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold text-fuchsia-700 hover:bg-fuchsia-50 transition"
             >
-              {isLoggingOut ? 'Déconnexion...' : 'Déconnexion'}
+              Mon profil
             </button>
+            <ProfileAvatarBadge onClick={() => setIsProfileOpen(true)} />
             <button
               type="button"
               onClick={() => setIsAddPaymentOpen(true)}
@@ -1166,6 +1169,12 @@ const CotisationsTracker = () => {
           </div>
         </div>
       )}
+
+      <ProfileModal
+        isOpen={isProfileOpen}
+        onClose={() => setIsProfileOpen(false)}
+        onLogout={handleLogout}
+      />
     </div>
   );
 };

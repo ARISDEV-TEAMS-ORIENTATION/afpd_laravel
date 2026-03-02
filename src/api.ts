@@ -1,5 +1,8 @@
-const rawApiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-export const API_BASE_URL = rawApiBaseUrl.replace(/\/+$/, '');
+const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
+const isLocalLaravelApi = /^https?:\/\/(localhost|127\.0\.0\.1):8000(?:\/api)?\/?$/i.test(rawApiBaseUrl);
+// En dev, on privilégie le proxy Vite pour éviter les erreurs CORS (uploads avatar, etc.).
+const effectiveApiBaseUrl = import.meta.env.DEV && isLocalLaravelApi ? '' : rawApiBaseUrl;
+export const API_BASE_URL = effectiveApiBaseUrl.replace(/\/+$/, '');
 const API_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 15000);
 const AUTH_TOKEN_STORAGE_KEY = 'afpd_auth_token';
 
@@ -132,7 +135,13 @@ export const apiDelete = async (endpoint: string, options?: FetchOptions) => {
         ...options,
         method: 'DELETE',
     });
-    return response.json();
+    const text = await response.text();
+    if (!text) return null;
+    try {
+        return JSON.parse(text);
+    } catch {
+        return { message: text };
+    }
 };
 
 export const apiPostForm = async (
