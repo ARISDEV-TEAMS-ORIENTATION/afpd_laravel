@@ -183,8 +183,8 @@ const HomePage = () => {
 
                                 <div className="rounded-2xl overflow-hidden ring-1 ring-white/10">
                                     <img
-                                        src="https://images.unsplash.com/photo-1551434678-e076c223a692?w=600&h=400&fit=crop"
-                                        alt="Dashboard Preview"
+                                        src="https://images.unsplash.com/photo-1521791136064-7986c2920216?auto=format&fit=crop&w=1200&q=80"
+                                        alt="Femmes collaborant sur des projets digitaux"
                                         className="w-full h-auto object-cover"
                                     />
                                 </div>
@@ -315,7 +315,7 @@ const HomePage = () => {
 
                 {/* Footer */}
                 <footer className="text-center text-base text-gray-600 mt-8 pb-8">
-                    © 2024 Association des Femmes à la Pointe du Digital (AFPD). Tous droits réservés.
+                    © 2026 Association des Femmes à la Pointe du Digital (AFPD). Tous droits réservés.
                 </footer>
             </div>
 

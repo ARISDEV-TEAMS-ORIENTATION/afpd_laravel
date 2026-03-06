@@ -1,8 +1,6 @@
-const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
-const isLocalLaravelApi = /^https?:\/\/(localhost|127\.0\.0\.1):8000(?:\/api)?\/?$/i.test(rawApiBaseUrl);
-// En dev, on privilégie le proxy Vite pour éviter les erreurs CORS (uploads avatar, etc.).
-const effectiveApiBaseUrl = import.meta.env.DEV && isLocalLaravelApi ? '' : rawApiBaseUrl;
-export const API_BASE_URL = effectiveApiBaseUrl.replace(/\/+$/, '');
+const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').trim();
+const normalizedApiBaseUrl = rawApiBaseUrl.replace(/\/+$/, '').replace(/\/api$/i, '');
+export const API_BASE_URL = normalizedApiBaseUrl;
 const API_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 15000);
 const AUTH_TOKEN_STORAGE_KEY = 'afpd_auth_token';
 
@@ -49,6 +47,9 @@ export const apiFetch = async (
 
     if (!isFormDataBody && !headers.has('Content-Type')) {
         headers.set('Content-Type', 'application/json');
+    }
+    if (!headers.has('Accept')) {
+        headers.set('Accept', 'application/json');
     }
     if (authToken && !headers.has('Authorization')) {
         headers.set('Authorization', `Bearer ${authToken}`);

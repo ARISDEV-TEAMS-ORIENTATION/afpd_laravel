@@ -18,9 +18,6 @@ import AFPDLogo from './AFPDLogo';
 import ProfileModal from './ProfileModal';
 import ProfileAvatarBadge from './ProfileAvatarBadge';
 
-const PAYMENT_DEADLINE_HOURS = 24;
-const PAYMENT_DEADLINE_MS = PAYMENT_DEADLINE_HOURS * 60 * 60 * 1000;
-
 const CotisationsTracker = () => {
   const [activeTab, setActiveTab] = useState('tous');
   const [currentPage, setCurrentPage] = useState(1);
@@ -65,6 +62,14 @@ const CotisationsTracker = () => {
     return `${first}${second}`.toUpperCase() || '--';
   };
 
+  const normalizeText = (value) => (
+    String(value ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim()
+  );
+
   const parseAmount = (value) => {
     if (value === null || value === undefined || value === '') return null;
     if (typeof value === 'number') {
@@ -97,6 +102,107 @@ const CotisationsTracker = () => {
     return Number.isNaN(parsed) ? null : parsed;
   };
 
+  const parseDateMs = (value) => {
+    if (value === null || value === undefined || value === '') return null;
+    if (value instanceof Date) {
+      const ms = value.getTime();
+      return Number.isNaN(ms) ? null : ms;
+    }
+    if (typeof value === 'number') {
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? null : date.getTime();
+    }
+    if (typeof value !== 'string') return null;
+
+    const raw = value.trim();
+    if (!raw) return null;
+
+    const isoMonthMatch = raw.match(/^(\d{4})-(\d{2})$/);
+    if (isoMonthMatch) {
+      const year = Number(isoMonthMatch[1]);
+      const month = Number(isoMonthMatch[2]);
+      if (month >= 1 && month <= 12) {
+        return new Date(year, month - 1, 1).getTime();
+      }
+    }
+
+    const frDateMatch = raw.match(
+      /^(\d{2})[/-](\d{2})[/-](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/,
+    );
+    if (frDateMatch) {
+      const day = Number(frDateMatch[1]);
+      const month = Number(frDateMatch[2]);
+      const year = Number(frDateMatch[3]);
+      const hour = Number(frDateMatch[4] ?? 0);
+      const minute = Number(frDateMatch[5] ?? 0);
+      const second = Number(frDateMatch[6] ?? 0);
+      const date = new Date(year, month - 1, day, hour, minute, second);
+      return Number.isNaN(date.getTime()) ? null : date.getTime();
+    }
+
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+  };
+
+  const getMonthKeyFromDateMs = (dateMs) => {
+    if (dateMs === null) return '';
+    const date = new Date(dateMs);
+    if (Number.isNaN(date.getTime())) return '';
+    const month = `${date.getMonth() + 1}`.padStart(2, '0');
+    return `${date.getFullYear()}-${month}`;
+  };
+
+  const parseMonthKey = (value) => {
+    if (!value) return '';
+    const raw = String(value).trim();
+    if (!raw) return '';
+
+    const yyyyMm = raw.match(/^(\d{4})[-/](\d{2})$/);
+    if (yyyyMm) {
+      const month = Number(yyyyMm[2]);
+      if (month >= 1 && month <= 12) return `${yyyyMm[1]}-${yyyyMm[2]}`;
+    }
+
+    const mmYyyy = raw.match(/^(\d{2})[-/](\d{4})$/);
+    if (mmYyyy) {
+      const month = Number(mmYyyy[1]);
+      if (month >= 1 && month <= 12) return `${mmYyyy[2]}-${mmYyyy[1]}`;
+    }
+
+    return '';
+  };
+
+  const normalizePaymentStatus = (value) => {
+    const normalized = normalizeText(value);
+    if (!normalized) return '';
+    if (
+      normalized.includes('paye')
+      || normalized.includes('paid')
+      || normalized.includes('regle')
+      || normalized.includes('reglee')
+      || normalized.includes('valide')
+    ) {
+      return 'paid';
+    }
+    if (
+      normalized.includes('retard')
+      || normalized.includes('late')
+      || normalized.includes('overdue')
+    ) {
+      return 'late';
+    }
+    if (
+      normalized.includes('attente')
+      || normalized.includes('pending')
+      || normalized.includes('impaye')
+      || normalized.includes('unpaid')
+      || normalized.includes('partiel')
+    ) {
+      return 'pending';
+    }
+    return '';
+  };
+
   const formatAmount = (value) => {
     if (value === null || value === undefined || value === '') return '-';
     const numberValue = Number(value);
@@ -106,8 +212,9 @@ const CotisationsTracker = () => {
 
   const formatDate = (value) => {
     if (!value) return '-';
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) return `${value}`;
+    const parsedMs = parseDateMs(value);
+    if (parsedMs === null) return `${value}`;
+    const parsed = new Date(parsedMs);
     return parsed.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
   };
 
@@ -116,16 +223,13 @@ const CotisationsTracker = () => {
     if (typeof value === 'string' && /^\d{1,2}:\d{2}/.test(value.trim())) {
       return value.trim();
     }
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) return `${value}`;
+    const parsedMs = parseDateMs(value);
+    if (parsedMs === null) return `${value}`;
+    const parsed = new Date(parsedMs);
     return parsed.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
   };
 
-  const getDateMs = (value) => {
-    if (!value) return null;
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
-  };
+  const getDateMs = (value) => parseDateMs(value);
 
   const getPaymentDateValue = (payment) => (
     payment?.date ??
@@ -156,9 +260,30 @@ const CotisationsTracker = () => {
     )
   );
 
+  const getPaymentMonthKey = (payment) => {
+    const periodCandidates = [
+      payment?.periode,
+      payment?.period,
+      payment?.mois,
+      payment?.month,
+      payment?.month_key,
+    ];
+    for (const candidate of periodCandidates) {
+      const parsed = parseMonthKey(candidate);
+      if (parsed) return parsed;
+    }
+
+    const dateMs = getDateMs(getPaymentDateValue(payment));
+    return getMonthKeyFromDateMs(dateMs);
+  };
+
   const toList = (payload) => {
     if (Array.isArray(payload)) return payload;
     if (Array.isArray(payload?.data)) return payload.data;
+    if (Array.isArray(payload?.data?.data)) return payload.data.data;
+    if (Array.isArray(payload?.items)) return payload.items;
+    if (Array.isArray(payload?.results)) return payload.results;
+    if (Array.isArray(payload?.rows)) return payload.rows;
     return [];
   };
 
@@ -209,7 +334,7 @@ const CotisationsTracker = () => {
     const statusByTab = {
       payes: 'paye',
       attente: 'en_attente',
-      retard: 'en_attente',
+      retard: 'retard',
     };
     const mappedStatus = statusByTab[activeTab];
     if (mappedStatus) params.set('status', mappedStatus);
@@ -222,9 +347,7 @@ const CotisationsTracker = () => {
     setPaymentsError('');
     try {
       const data = await apiGet('/api/cotisations');
-      const list = Array.isArray(data)
-        ? data
-        : (Array.isArray(data?.data) ? data.data : null);
+      const list = toList(data);
       if (!Array.isArray(list)) {
         throw new Error('Format de réponse invalide pour les paiements.');
       }
@@ -241,9 +364,7 @@ const CotisationsTracker = () => {
     setUsersError('');
     try {
       const data = await apiGet('/api/users');
-      const list = Array.isArray(data)
-        ? data
-        : (Array.isArray(data?.data) ? data.data : null);
+      const list = toList(data);
       if (!Array.isArray(list)) {
         throw new Error('Format de réponse invalide pour les utilisateurs.');
       }
@@ -263,8 +384,8 @@ const CotisationsTracker = () => {
     setInsightsError('');
     try {
       const [summaryResponse, lateResponse] = await Promise.all([
-        apiGet(`/api/cotisations/summary?month=${currentMonth}`),
-        apiGet(`/api/cotisations/late?month=${currentMonth}`),
+        apiGet('/api/cotisations/summary'),
+        apiGet('/api/cotisations/late'),
       ]);
       setSummaryData(toItem(summaryResponse));
       setLatePayments(toList(lateResponse));
@@ -335,6 +456,20 @@ const CotisationsTracker = () => {
     window.URL.revokeObjectURL(blobUrl);
   };
 
+  const readFilenameFromContentDisposition = (contentDispositionValue) => {
+    if (!contentDispositionValue || typeof contentDispositionValue !== 'string') return '';
+    const utf8Match = contentDispositionValue.match(/filename\*=UTF-8''([^;]+)/i);
+    if (utf8Match?.[1]) {
+      try {
+        return decodeURIComponent(utf8Match[1].replace(/["']/g, '').trim());
+      } catch {
+        return utf8Match[1].replace(/["']/g, '').trim();
+      }
+    }
+    const asciiMatch = contentDispositionValue.match(/filename="?([^";]+)"?/i);
+    return asciiMatch?.[1]?.trim() || '';
+  };
+
   const handleExport = async (format) => {
     if (isExporting) return;
     setIsExporting(true);
@@ -357,11 +492,49 @@ const CotisationsTracker = () => {
     setIsGeneratingReceiptId(paymentId);
     setReceiptError('');
     try {
-      const response = await apiPost(`/api/cotisations/${paymentId}/receipt`, {});
-      const receiptUrl = response?.url ?? response?.download_url ?? response?.receipt_url ?? '';
-      if (receiptUrl && typeof receiptUrl === 'string') {
-        window.open(receiptUrl, '_blank', 'noopener,noreferrer');
+      const response = await apiFetch(`/api/cotisations/${paymentId}/receipt`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      const contentType = (response.headers.get('content-type') || '').toLowerCase();
+
+      if (contentType.includes('application/json')) {
+        const payload = await response.json();
+        const receiptUrl = payload?.url ?? payload?.download_url ?? payload?.receipt_url ?? '';
+        if (receiptUrl && typeof receiptUrl === 'string') {
+          window.open(receiptUrl, '_blank', 'noopener,noreferrer');
+          return;
+        }
+        throw new Error('Le serveur n’a pas retourné de lien de reçu exploitable.');
       }
+
+      const blob = await response.blob();
+      const filenameFromHeaders = readFilenameFromContentDisposition(
+        response.headers.get('content-disposition'),
+      );
+      const isPdfLike = contentType.includes('application/pdf') || /\.pdf$/i.test(filenameFromHeaders);
+      if (isPdfLike) {
+        const fallbackFilename = `recu-cotisation-${paymentId}.pdf`;
+        triggerBlobDownload(blob, filenameFromHeaders || fallbackFilename);
+        return;
+      }
+
+      if (contentType.includes('text/html')) {
+        const htmlUrl = window.URL.createObjectURL(blob);
+        window.open(htmlUrl, '_blank', 'noopener,noreferrer');
+        setTimeout(() => window.URL.revokeObjectURL(htmlUrl), 60_000);
+        return;
+      }
+
+      if (contentType.includes('text/plain')) {
+        const rawText = (await blob.text()).trim();
+        if (/^https?:\/\//i.test(rawText)) {
+          window.open(rawText, '_blank', 'noopener,noreferrer');
+          return;
+        }
+      }
+
+      throw new Error('Format de reçu non pris en charge par le navigateur.');
     } catch (error) {
       setReceiptError(error?.message || 'Impossible de générer le reçu.');
     } finally {
@@ -387,13 +560,13 @@ const CotisationsTracker = () => {
         const userKey = `${userId}`;
         const linkedUser = usersById.get(userKey);
         const amountValue = getPaymentAmountValue(payment);
-        const hasPositiveAmount = amountValue !== null && amountValue > 0;
-        if (!hasPositiveAmount) return null;
-
         const dateValue = getPaymentDateValue(payment);
         const dateMs = getDateMs(dateValue);
         const timeValue = getPaymentTimeValue(payment, dateValue);
         const fullName = `${payment?.nom ?? linkedUser?.nom ?? ''} ${payment?.prenom ?? linkedUser?.prenom ?? ''}`.trim();
+        const rawStatus = normalizePaymentStatus(
+          payment?.statut ?? payment?.status ?? payment?.etat ?? payment?.state,
+        );
 
         return {
           id: payment?.id ?? `${userKey}-${dateValue ?? index}`,
@@ -408,12 +581,14 @@ const CotisationsTracker = () => {
           amountValue,
           amount: formatAmount(amountValue),
           period: payment?.periode ?? payment?.period ?? '-',
+          monthKey: getPaymentMonthKey(payment),
+          status: rawStatus || (amountValue !== null && amountValue > 0 ? 'paid' : ''),
         };
       })
       .filter(Boolean);
   }, [payments, usersById]);
 
-  const latestPaidPaymentByUserId = useMemo(() => {
+  const latestPaymentByUserId = useMemo(() => {
     const map = new Map();
     paymentEntries.forEach((entry) => {
       const current = map.get(entry.userId);
@@ -432,31 +607,40 @@ const CotisationsTracker = () => {
     return map;
   }, [paymentEntries]);
 
-  const activePaymentByUserId = useMemo(() => {
-    const nowMs = Date.now();
+  const currentMonthPaymentByUserId = useMemo(() => {
     const map = new Map();
     paymentEntries.forEach((entry) => {
-      const isActivePayment = entry.dateMs !== null && (nowMs - entry.dateMs) <= PAYMENT_DEADLINE_MS;
-      if (!isActivePayment) return;
+      if (!entry.monthKey || entry.monthKey !== currentMonth) return;
       const current = map.get(entry.userId);
-      if (!current || (current.dateMs !== null && entry.dateMs !== null && entry.dateMs > current.dateMs)) {
+      if (!current) {
+        map.set(entry.userId, entry);
+        return;
+      }
+      if (current.dateMs === null && entry.dateMs !== null) {
+        map.set(entry.userId, entry);
+        return;
+      }
+      if (current.dateMs !== null && entry.dateMs !== null && entry.dateMs > current.dateMs) {
         map.set(entry.userId, entry);
       }
     });
     return map;
-  }, [paymentEntries]);
+  }, [currentMonth, paymentEntries]);
 
   const archivedPaymentsDisplay = useMemo(() => {
-    const nowMs = Date.now();
     return paymentEntries
-      .filter((entry) => entry.dateMs === null || (nowMs - entry.dateMs) > PAYMENT_DEADLINE_MS)
+      .filter((entry) => {
+        if (entry.amountValue === null || entry.amountValue <= 0) return false;
+        if (!entry.monthKey) return true;
+        return entry.monthKey !== currentMonth;
+      })
       .sort((a, b) => {
         if (a.dateMs === null && b.dateMs === null) return 0;
         if (a.dateMs === null) return 1;
         if (b.dateMs === null) return -1;
         return b.dateMs - a.dateMs;
       });
-  }, [paymentEntries]);
+  }, [currentMonth, paymentEntries]);
 
   const archivedPaymentsFiltered = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -469,13 +653,11 @@ const CotisationsTracker = () => {
   }, [archivedPaymentsDisplay, searchQuery]);
 
   const paymentsDisplay = useMemo(() => {
-    const nowMs = Date.now();
-
     return users.map((user) => {
       const userId = user?.id;
       const userKey = userId === null || userId === undefined ? '' : `${userId}`;
-      const activePayment = userKey ? (activePaymentByUserId.get(userKey) ?? null) : null;
-      const latestPaidPayment = userKey ? (latestPaidPaymentByUserId.get(userKey) ?? null) : null;
+      const currentMonthPayment = userKey ? (currentMonthPaymentByUserId.get(userKey) ?? null) : null;
+      const latestPayment = userKey ? (latestPaymentByUserId.get(userKey) ?? null) : null;
 
       const registrationDateValue =
         user?.created_at ??
@@ -483,10 +665,23 @@ const CotisationsTracker = () => {
         user?.date_inscription ??
         user?.date;
       const registrationDateMs = getDateMs(registrationDateValue);
+      const registrationMonthKey = getMonthKeyFromDateMs(registrationDateMs);
+      const hasCurrentPaymentRecord = Boolean(currentMonthPayment);
 
-      const referenceDateMs = activePayment?.dateMs ?? latestPaidPayment?.dateMs ?? registrationDateMs;
-      const isLate = !activePayment && referenceDateMs !== null && (nowMs - referenceDateMs) > PAYMENT_DEADLINE_MS;
-      const computedStatus = activePayment ? 'paid' : (isLate ? 'late' : 'pending');
+      const computedStatus = (() => {
+        if (hasCurrentPaymentRecord) {
+          if (currentMonthPayment.status) return currentMonthPayment.status;
+          if (currentMonthPayment.amountValue !== null && currentMonthPayment.amountValue > 0) {
+            return 'paid';
+          }
+          return 'pending';
+        }
+        if (registrationMonthKey && registrationMonthKey < currentMonth) return 'late';
+        return 'pending';
+      })();
+
+      const referenceDateMs =
+        currentMonthPayment?.dateMs ?? latestPayment?.dateMs ?? registrationDateMs;
 
       const fullName = `${user?.nom ?? ''} ${user?.prenom ?? ''}`.trim();
 
@@ -496,22 +691,22 @@ const CotisationsTracker = () => {
         name: fullName || '-',
         sortName: (fullName || '').toLowerCase(),
         memberId: userKey || '-',
-        date: activePayment?.date ?? latestPaidPayment?.date ?? formatDate(registrationDateValue),
+        date: hasCurrentPaymentRecord ? currentMonthPayment.date : '-',
         sortDateMs: referenceDateMs,
-        time: activePayment?.time ?? latestPaidPayment?.time ?? formatTime(registrationDateValue),
-        period: activePayment?.period ?? '-',
-        amount: activePayment?.amount ?? latestPaidPayment?.amount ?? '-',
-        amountValue: activePayment?.amountValue ?? latestPaidPayment?.amountValue ?? null,
-        hasArchivedPayment: !activePayment && !!latestPaidPayment,
-        lastPaymentDate: latestPaidPayment?.date ?? '-',
-        lastPaymentTime: latestPaidPayment?.time ?? '-',
-        receiptPaymentId: activePayment?.paymentId ?? latestPaidPayment?.paymentId ?? null,
+        time: hasCurrentPaymentRecord ? currentMonthPayment.time : '-',
+        period: hasCurrentPaymentRecord ? (currentMonthPayment.period || currentMonth) : '-',
+        amount: hasCurrentPaymentRecord ? currentMonthPayment.amount : '-',
+        amountValue: hasCurrentPaymentRecord ? currentMonthPayment.amountValue : null,
+        hasArchivedPayment: !hasCurrentPaymentRecord && !!latestPayment,
+        lastPaymentDate: latestPayment?.date ?? '-',
+        lastPaymentTime: latestPayment?.time ?? '-',
+        receiptPaymentId: computedStatus === 'paid' ? (currentMonthPayment?.paymentId ?? null) : null,
         status: computedStatus,
         rawStatus: computedStatus,
         color: '#F8D7EA',
       };
     });
-  }, [users, activePaymentByUserId, latestPaidPaymentByUserId]);
+  }, [users, currentMonthPaymentByUserId, latestPaymentByUserId, currentMonth]);
 
   const filteredPaymentsDisplay = useMemo(() => {
     if (activeTab === 'payes') {
@@ -583,15 +778,15 @@ const CotisationsTracker = () => {
     let totalCollected = 0;
     let latestPaymentMs = null;
 
-    payments.forEach((payment) => {
-      const amount = getPaymentAmountValue(payment);
-      const dateMs = getDateMs(getPaymentDateValue(payment));
-      if (amount !== null && amount > 0) {
+    paymentEntries.forEach((entry) => {
+      if (entry.amountValue !== null && entry.amountValue > 0) {
+        const amount = entry.amountValue;
+        const dateMs = entry.dateMs;
         const yearMatch = dateMs ? new Date(dateMs).getFullYear() === currentYear : true;
         if (yearMatch) totalCollected += amount;
       }
-      if (dateMs) {
-        latestPaymentMs = latestPaymentMs === null ? dateMs : Math.max(latestPaymentMs, dateMs);
+      if (entry.dateMs) {
+        latestPaymentMs = latestPaymentMs === null ? entry.dateMs : Math.max(latestPaymentMs, entry.dateMs);
       }
     });
 
@@ -602,7 +797,12 @@ const CotisationsTracker = () => {
     const summaryAmount = readSummaryAmount(summaryData);
     const summaryLateCount = readSummaryLateCount(summaryData);
     const lateFromEndpoint = Array.isArray(latePayments) ? latePayments.length : null;
-    const effectiveLateCount = summaryLateCount ?? lateFromEndpoint ?? lateOrPendingCount;
+    const effectiveCollected = summaryAmount === null
+      ? totalCollected
+      : Math.max(summaryAmount, totalCollected);
+    const lateCandidates = [summaryLateCount, lateFromEndpoint, lateOrPendingCount]
+      .filter((value) => Number.isFinite(value) && value >= 0);
+    const effectiveLateCount = lateCandidates.length ? Math.max(...lateCandidates) : 0;
 
     const lastUpdateLabel = latestPaymentMs
       ? `Dernière mise à jour: ${formatDate(latestPaymentMs)} ${formatTime(latestPaymentMs)}`
@@ -611,7 +811,7 @@ const CotisationsTracker = () => {
     return [
       {
         title: "TOTAL COLLECTÉ (ANNUEL)",
-        amount: formatAmount(summaryAmount ?? totalCollected),
+        amount: formatAmount(effectiveCollected),
         change: '',
         subtitle: lastUpdateLabel,
         icon: CircleDollarSign,
@@ -634,7 +834,7 @@ const CotisationsTracker = () => {
         color: "rose"
       }
     ];
-  }, [latePayments, payments, paymentsDisplay, summaryData, users]);
+  }, [latePayments, paymentEntries, paymentsDisplay, summaryData, users]);
 
   const getStatusBadge = (status) => {
     switch(status) {
@@ -677,7 +877,7 @@ const CotisationsTracker = () => {
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#FDF5FA' }}>
       {/* Header */}
-      <header className="bg-white border-b border-fuchsia-100 px-8 py-4 sticky top-0 z-30">
+      <header className="bg-white border-b border-fuchsia-100 px-8 py- sticky top-0 z-30">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
           <AFPDLogo compact showSubtitle={false} />
@@ -716,7 +916,7 @@ const CotisationsTracker = () => {
             <button
               type="button"
               onClick={() => setIsAddPaymentOpen(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-white font-medium hover:opacity-90 transition-opacity"
+              className="flex items-center gap-2 px-2 py- rounded-lg text-white font-medium hover:opacity-90 transition-opacity"
                     style={{ backgroundColor: '#B8328F' }}>
               <Plus size={20} />
               Enregistrer un paiement
@@ -785,7 +985,7 @@ const CotisationsTracker = () => {
               <div className="flex gap-8">
                 {[
                   { key: 'tous', label: 'Toutes les adhérentes' },
-                  { key: 'payes', label: 'Payés (24h)' },
+                  { key: 'payes', label: 'Payés (mois en cours)' },
                   { key: 'attente', label: 'En attente' },
                   { key: 'retard', label: 'En retard' }
                 ].map((tab) => (
@@ -870,7 +1070,7 @@ const CotisationsTracker = () => {
           </div>
           <div className="px-6 py-3 bg-rose-50 border-b border-rose-100">
             <p className="text-xs text-rose-700">
-              Délai actif de paiement: {PAYMENT_DEADLINE_HOURS}h. Après ce délai, le paiement passe en archive et l'adhérente peut être enregistrée de nouveau.
+              Le statut “Payé” est calculé sur le mois en cours. Les paiements des mois précédents restent consultables dans les archives.
             </p>
           </div>
           {(insightsError || exportError || receiptError) && (
@@ -1040,7 +1240,7 @@ const CotisationsTracker = () => {
             <div className="px-6 py-4 border-b border-fuchsia-100 bg-fuchsia-50/40">
               <h3 className="text-base font-semibold text-fuchsia-800">Archive des paiements</h3>
               <p className="text-xs text-fuchsia-700 mt-1">
-                Les paiements de plus de {PAYMENT_DEADLINE_HOURS}h sont conservés ici.
+                Les paiements des mois précédents sont conservés ici.
               </p>
             </div>
             <div className="overflow-x-auto max-h-[360px]">

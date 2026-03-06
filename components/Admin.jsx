@@ -2729,7 +2729,7 @@ const Admin = ({ initialSectionId = 'dashboard' }) => {
                     {/* Footer */}
                     <footer className="bg-white border-t border-fuchsia-100 mt-12">
                         <div className="w-full px-6 py-6 text-center text-sm text-gray-600">
-                            © 2024 Association des Femmes à la Pointe du Digital (AFPD). Tous droits réservés.
+                            © 2026 Association des Femmes à la Pointe du Digital (AFPD). Tous droits réservés.
                         </div>
                     </footer>
                 </div>
